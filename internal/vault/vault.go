@@ -6,74 +6,55 @@ import (
 	"path/filepath"
 	"strings"
 
+	"filippo.io/age"
 	"github.com/user/envault/internal/crypto"
-	"github.com/user/envault/internal/keystore"
 )
 
-const encryptedSuffix = ".age"
+const ageSuffix = ".age"
 
-// Vault manages encryption and decryption of .env files.
+// Vault manages encryption and decryption of .env files in a directory.
 type Vault struct {
-	ks *keystore.KeyStore
+	dir      string
+	identity *age.X25519Identity
+	crypto   *crypto.Crypto
 }
 
-// New creates a new Vault using the provided KeyStore.
-func New(ks *keystore.KeyStore) *Vault {
-	return &Vault{ks: ks}
+// New creates a Vault rooted at dir using the provided identity.
+func New(dir string, identity *age.X25519Identity) *Vault {
+	return &Vault{
+		dir:      dir,
+		identity: identity,
+		crypto:   crypto.New(),
+	}
 }
 
-// Seal encrypts the given .env file, writing a .age file alongside it.
-// Returns the path of the encrypted file.
-func (v *Vault) Seal(envPath string) (string, error) {
-	if _, err := os.Stat(envPath); err != nil {
-		return "", fmt.Errorf("seal: source file not found: %w", err)
+// Seal encrypts name (e.g. ".env") inside the vault directory.
+func (v *Vault) Seal(name string) error {
+	src := filepath.Join(v.dir, name)
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return fmt.Errorf("seal: source file not found: %s", src)
 	}
-
-	identity, err := v.ks.Load()
-	if err != nil {
-		return "", fmt.Errorf("seal: load identity: %w", err)
-	}
-
-	recipient, err := identity.Recipient()
-	if err != nil {
-		return "", fmt.Errorf("seal: derive recipient: %w", err)
-	}
-
-	outPath := encryptedPath(envPath)
-	if err := crypto.EncryptFile(envPath, outPath, recipient); err != nil {
-		return "", fmt.Errorf("seal: encrypt: %w", err)
-	}
-
-	return outPath, nil
+	dst := encryptedPath(v.dir, name)
+	return v.crypto.EncryptFile(src, dst, v.identity.Recipient())
 }
 
-// Unseal decrypts the given .age file, writing the plaintext .env file.
-// Returns the path of the decrypted file.
-func (v *Vault) Unseal(agePath string) (string, error) {
-	if !strings.HasSuffix(agePath, encryptedSuffix) {
-		return "", fmt.Errorf("unseal: expected %s suffix, got %q", encryptedSuffix, agePath)
+// Unseal decrypts the sealed version of name back to its original path.
+func (v *Vault) Unseal(name string) error {
+	if !strings.HasSuffix(name, ageSuffix) {
+		return fmt.Errorf("unseal: expected %s suffix, got: %s", ageSuffix, name)
 	}
-
-	if _, err := os.Stat(agePath); err != nil {
-		return "", fmt.Errorf("unseal: source file not found: %w", err)
-	}
-
-	identity, err := v.ks.Load()
-	if err != nil {
-		return "", fmt.Errorf("unseal: load identity: %w", err)
-	}
-
-	outPath := strings.TrimSuffix(agePath, encryptedSuffix)
-	if err := crypto.DecryptFile(agePath, outPath, identity); err != nil {
-		return "", fmt.Errorf("unseal: decrypt: %w", err)
-	}
-
-	return outPath, nil
+	src := filepath.Join(v.dir, name)
+	dst := filepath.Join(v.dir, strings.TrimSuffix(name, ageSuffix))
+	return v.crypto.DecryptFile(src, dst, v.identity)
 }
 
-// encryptedPath returns the .age output path for a given source path.
-func encryptedPath(src string) string {
-	dir := filepath.Dir(src)
-	base := filepath.Base(src)
-	return filepath.Join(dir, base+encryptedSuffix)
+// UnsealTo decrypts the sealed version of envName to an explicit output path.
+func (v *Vault) UnsealTo(envName, outPath string) error {
+	encPath := encryptedPath(v.dir, envName)
+	return v.crypto.DecryptFile(encPath, outPath, v.identity)
+}
+
+// encryptedPath returns the expected path of the encrypted file for name.
+func encryptedPath(dir, name string) string {
+	return filepath.Join(dir, name+ageSuffix)
 }

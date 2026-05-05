@@ -3,103 +3,98 @@ package vault
 import (
 	"bufio"
 	"fmt"
-	"os"
 	"strings"
 )
 
-// DiffResult holds the comparison between a plaintext .env and its encrypted counterpart.
+// DiffResult holds the result of comparing plain vs encrypted env files.
 type DiffResult struct {
-	OnlyInPlain     []string
-	OnlyInEncrypted []string
-	Modified        []string
-	Unchanged       []string
+	Modified    []string
+	OnlyInPlain []string
+	OnlyInEnc   []string
 }
 
-// HasChanges returns true if there are any differences between the two files.
-func (d *DiffResult) HasChanges() bool {
-	return len(d.OnlyInPlain) > 0 || len(d.OnlyInEncrypted) > 0 || len(d.Modified) > 0
+// HasChanges returns true if any differences were found.
+func (d DiffResult) HasChanges() bool {
+	return len(d.Modified) > 0 || len(d.OnlyInPlain) > 0 || len(d.OnlyInEnc) > 0
 }
 
-// Diff decrypts the sealed version of envPath and compares keys/values with the
-// current plaintext file. It returns a DiffResult describing what changed.
-func (v *Vault) Diff(envPath string) (*DiffResult, error) {
-	encPath := encryptedPath(envPath)
-	if _, err := os.Stat(encPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("no encrypted file found for %s", envPath)
-	}
+// Diff compares the plain .env file with its encrypted counterpart.
+func (v *Vault) Diff(name string) (DiffResult, error) {
+	plainPath := fmt.Sprintf("%s/%s", v.dir, name)
+	encPath := encryptedPath(v.dir, name)
 
-	// Decrypt to a temp file.
-	tmp, err := os.CreateTemp("", "envault-diff-*")
+	plainData, err := readFileOrEmpty(plainPath)
 	if err != nil {
-		return nil, fmt.Errorf("create temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
-	tmp.Close()
-	defer os.Remove(tmpPath)
-
-	if err := v.Unseal(encPath); err != nil {
-		return nil, fmt.Errorf("unseal for diff: %w", err)
-	}
-	// Unseal writes to envPath; move that to tmpPath so we can compare.
-	if err := os.Rename(envPath, tmpPath); err != nil {
-		return nil, fmt.Errorf("rename decrypted file: %w", err)
+		return DiffResult{}, fmt.Errorf("read plain file: %w", err)
 	}
 
-	plain, err := parseEnvFile(envPath + ".orig")
+	tmpFile, err := decryptToTemp(v, encPath)
 	if err != nil {
-		// Fall back: read the original plaintext if it still exists.
-		plain, err = parseEnvFile(envPath)
-		if err != nil {
-			plain = map[string]string{}
+		return DiffResult{}, fmt.Errorf("decrypt for diff: %w", err)
+	}
+	defer removeTemp(tmpFile)
+
+	encData, err := readFileOrEmpty(tmpFile)
+	if err != nil {
+		return DiffResult{}, fmt.Errorf("read decrypted file: %w", err)
+	}
+
+	plainPairs, err := parseEnvFile(plainData)
+	if err != nil {
+		return DiffResult{}, fmt.Errorf("parse plain: %w", err)
+	}
+	encPairs, err := parseEnvFile(encData)
+	if err != nil {
+		return DiffResult{}, fmt.Errorf("parse encrypted: %w", err)
+	}
+
+	return computeDiff(plainPairs, encPairs), nil
+}
+
+func computeDiff(plain, enc []envPair) DiffResult {
+	var result DiffResult
+	plainMap := pairsToMap(plain)
+	encMap := pairsToMap(enc)
+
+	for k, pv := range plainMap {
+		if ev, ok := encMap[k]; !ok {
+			result.OnlyInPlain = append(result.OnlyInPlain, k)
+		} else if pv != ev {
+			result.Modified = append(result.Modified, k)
 		}
 	}
-
-	decrypted, err := parseEnvFile(tmpPath)
-	if err != nil {
-		return nil, fmt.Errorf("parse decrypted env: %w", err)
+	for k := range encMap {
+		if _, ok := plainMap[k]; !ok {
+			result.OnlyInEnc = append(result.OnlyInEnc, k)
+		}
 	}
-
-	return computeDiff(plain, decrypted), nil
+	return result
 }
 
-func parseEnvFile(path string) (map[string]string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	result := make(map[string]string)
-	scanner := bufio.NewScanner(f)
+func parseEnvFile(content string) ([]envPair, error) {
+	var pairs []envPair
+	scanner := bufio.NewScanner(strings.NewReader(content))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		parts := strings.SplitN(line, "=", 2)
-		if len(parts) == 2 {
-			result[parts[0]] = parts[1]
+		if len(parts) != 2 {
+			continue
 		}
+		pairs = append(pairs, envPair{
+			Key:   strings.TrimSpace(parts[0]),
+			Value: strings.TrimSpace(parts[1]),
+		})
 	}
-	return result, scanner.Err()
+	return pairs, scanner.Err()
 }
 
-func computeDiff(plain, encrypted map[string]string) *DiffResult {
-	result := &DiffResult{}
-	for k, v := range plain {
-		ev, ok := encrypted[k]
-		if !ok {
-			result.OnlyInPlain = append(result.OnlyInPlain, k)
-		} else if v != ev {
-			result.Modified = append(result.Modified, k)
-		} else {
-			result.Unchanged = append(result.Unchanged, k)
-		}
+func pairsToMap(pairs []envPair) map[string]string {
+	m := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		m[p.Key] = p.Value
 	}
-	for k := range encrypted {
-		if _, ok := plain[k]; !ok {
-			result.OnlyInEncrypted = append(result.OnlyInEncrypted, k)
-		}
-	}
-	return result
+	return m
 }

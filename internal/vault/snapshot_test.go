@@ -20,39 +20,34 @@ func generateSnapshotTestIdentity(t *testing.T) *age.X25519Identity {
 func TestTakeSnapshot_CreatesFile(t *testing.T) {
 	dir := t.TempDir()
 	id := generateSnapshotTestIdentity(t)
-	v := New(dir, id)
+	v := New(dir, ".env")
 
-	envPath := filepath.Join(dir, ".env")
-	if err := os.WriteFile(envPath, []byte("KEY=value\n"), 0600); err != nil {
+	plain := filepath.Join(dir, ".env")
+	if err := os.WriteFile(plain, []byte("X=1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := v.Seal(".env"); err != nil {
+	if err := v.Seal(id.Recipient()); err != nil {
 		t.Fatalf("seal: %v", err)
 	}
 
-	snap, err := v.TakeSnapshot(".env")
+	snapID, err := v.TakeSnapshot(id.Recipient())
 	if err != nil {
-		t.Fatalf("TakeSnapshot: %v", err)
+		t.Fatalf("take snapshot: %v", err)
 	}
 
-	if snap.Name == "" {
-		t.Error("expected non-empty snapshot name")
-	}
-
-	snapshotFile := filepath.Join(snapshotDir(dir), snap.Name)
-	if _, err := os.Stat(snapshotFile); err != nil {
-		t.Errorf("snapshot file not found: %v", err)
+	snapPath := filepath.Join(snapshotDir(dir), snapID+".age")
+	if _, err := os.Stat(snapPath); os.IsNotExist(err) {
+		t.Errorf("snapshot file not created at %s", snapPath)
 	}
 }
 
 func TestListSnapshots_Empty(t *testing.T) {
 	dir := t.TempDir()
-	id := generateSnapshotTestIdentity(t)
-	v := New(dir, id)
+	v := New(dir, ".env")
 
 	snaps, err := v.ListSnapshots()
 	if err != nil {
-		t.Fatalf("ListSnapshots: %v", err)
+		t.Fatalf("list: %v", err)
 	}
 	if len(snaps) != 0 {
 		t.Errorf("expected 0 snapshots, got %d", len(snaps))
@@ -62,25 +57,25 @@ func TestListSnapshots_Empty(t *testing.T) {
 func TestListSnapshots_AfterMultipleTakes(t *testing.T) {
 	dir := t.TempDir()
 	id := generateSnapshotTestIdentity(t)
-	v := New(dir, id)
+	v := New(dir, ".env")
 
-	envPath := filepath.Join(dir, ".env")
-	if err := os.WriteFile(envPath, []byte("A=1\n"), 0600); err != nil {
+	plain := filepath.Join(dir, ".env")
+	if err := os.WriteFile(plain, []byte("X=1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := v.Seal(".env"); err != nil {
+	if err := v.Seal(id.Recipient()); err != nil {
 		t.Fatalf("seal: %v", err)
 	}
 
 	for i := 0; i < 3; i++ {
-		if _, err := v.TakeSnapshot(".env"); err != nil {
-			t.Fatalf("TakeSnapshot %d: %v", i, err)
+		if _, err := v.TakeSnapshot(id.Recipient()); err != nil {
+			t.Fatalf("take snapshot %d: %v", i, err)
 		}
 	}
 
 	snaps, err := v.ListSnapshots()
 	if err != nil {
-		t.Fatalf("ListSnapshots: %v", err)
+		t.Fatalf("list: %v", err)
 	}
 	if len(snaps) != 3 {
 		t.Errorf("expected 3 snapshots, got %d", len(snaps))
@@ -90,10 +85,10 @@ func TestListSnapshots_AfterMultipleTakes(t *testing.T) {
 func TestTakeSnapshot_MissingSource(t *testing.T) {
 	dir := t.TempDir()
 	id := generateSnapshotTestIdentity(t)
-	v := New(dir, id)
+	v := New(dir, ".env")
 
-	_, err := v.TakeSnapshot("nonexistent.env")
+	_, err := v.TakeSnapshot(id.Recipient())
 	if err == nil {
-		t.Error("expected error for missing source file")
+		t.Fatal("expected error for missing sealed vault")
 	}
 }

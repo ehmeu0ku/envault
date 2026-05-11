@@ -36,7 +36,7 @@ func runRotate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load identity: %w", err)
 	}
 
-	// Generate a new identity for rotation
+	// Generate a new identity for rotation and persist it, replacing the old one.
 	newIdentity, err := ks.Generate()
 	if err != nil {
 		return fmt.Errorf("generate new identity: %w", err)
@@ -45,18 +45,27 @@ func runRotate(cmd *cobra.Command, args []string) error {
 	v := vault.New(".", identity)
 
 	if rotateAllFlag || len(args) == 0 {
-		rotated, err := v.RotateAll(newIdentity.Recipient())
-		if err != nil {
-			return fmt.Errorf("rotate all: %w", err)
-		}
-		for _, name := range rotated {
-			fmt.Fprintf(os.Stdout, "rotated: %s\n", name)
-		}
-		fmt.Fprintf(os.Stdout, "rotated %d file(s) with new key\n", len(rotated))
-		return nil
+		return runRotateAll(v, newIdentity)
 	}
 
-	name := args[0]
+	return runRotateSingle(v, args[0], newIdentity)
+}
+
+// runRotateAll re-encrypts every sealed file in the vault with newIdentity.
+func runRotateAll(v *vault.Vault, newIdentity keystore.Identity) error {
+	rotated, err := v.RotateAll(newIdentity.Recipient())
+	if err != nil {
+		return fmt.Errorf("rotate all: %w", err)
+	}
+	for _, name := range rotated {
+		fmt.Fprintf(os.Stdout, "rotated: %s\n", name)
+	}
+	fmt.Fprintf(os.Stdout, "rotated %d file(s) with new key\n", len(rotated))
+	return nil
+}
+
+// runRotateSingle re-encrypts a single named sealed file with newIdentity.
+func runRotateSingle(v *vault.Vault, name string, newIdentity keystore.Identity) error {
 	if err := v.Rotate(name, newIdentity.Recipient()); err != nil {
 		return fmt.Errorf("rotate %s: %w", name, err)
 	}

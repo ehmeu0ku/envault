@@ -68,5 +68,18 @@ func DecryptFile(srcPath, destPath, identityKey string) error {
 		return fmt.Errorf("reading decrypted stream: %w", err)
 	}
 
-	return os.WriteFile(destPath, plaintext, 0600)
+	if err := os.WriteFile(destPath, plaintext, 0600); err != nil {
+		return fmt.Errorf("writing decrypted file: %w", err)
+	}
+	return nil
+}
+
+// GenerateKey generates a new X25519 key pair and returns the identity (private
+// key) string and recipient (public key) string respectively.
+func GenerateKey() (identity, recipient string, err error) {
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		return "", "", fmt.Errorf("generating key pair: %w", err)
+	}
+	return id.String(), id.Recipient().String(), nil
 }

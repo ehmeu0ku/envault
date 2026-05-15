@@ -65,3 +65,17 @@ func TestParseCheckEnvFile_MalformedLineSkipped(t *testing.T) {
 		t.Errorf("unexpected key: %s", pairs[0][0])
 	}
 }
+
+func TestParseCheckEnvFile_EmptyValue(t *testing.T) {
+	content := "FOO=\nBAR=baz\n"
+	pairs := parseCheckEnvFile(content)
+	if len(pairs) != 2 {
+		t.Fatalf("expected 2 pairs, got %d", len(pairs))
+	}
+	if pairs[0][0] != "FOO" || pairs[0][1] != "" {
+		t.Errorf("expected FOO with empty value, got key=%s value=%s", pairs[0][0], pairs[0][1])
+	}
+	if pairs[1][0] != "BAR" || pairs[1][1] != "baz" {
+		t.Errorf("unexpected pair: %v", pairs[1])
+	}
+}

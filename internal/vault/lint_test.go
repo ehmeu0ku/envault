@@ -89,6 +89,32 @@ func TestLint_MissingEncryptedFile(t *testing.T) {
 	}
 }
 
+func TestLint_MultipleEmptyValues(t *testing.T) {
+	id := generateLintTestIdentity(t)
+	v := tempVaultWithIdentity(t, id)
+
+	env := filepath.Join(v.dir, ".env")
+	writeEnvFile(t, env, "KEY1=\nKEY2=\nKEY3=value\n")
+	if err := v.Seal(env); err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+
+	res, err := v.Lint(env)
+	if err != nil {
+		t.Fatalf("lint error: %v", err)
+	}
+
+	var emptyCount int
+	for _, iss := range res.Issues {
+		if strings.Contains(iss.Message, "empty value") {
+			emptyCount++
+		}
+	}
+	if emptyCount != 2 {
+		t.Errorf("expected 2 empty value issues, got %d", emptyCount)
+	}
+}
+
 func containsMsg(issues []LintIssue, sub string) bool {
 	for _, iss := range issues {
 		if strings.Contains(iss.Message, sub) {

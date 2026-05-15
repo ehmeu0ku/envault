@@ -16,6 +16,7 @@ type SearchResult struct {
 
 // Search decrypts all .env.age files in the vault directory and returns
 // entries whose key or value contains the given query string (case-insensitive).
+// Files that cannot be decrypted are silently skipped.
 func (v *Vault) Search(identity age.Identity, query string) ([]SearchResult, error) {
 	entries, err := v.List()
 	if err != nil {
@@ -32,8 +33,7 @@ func (v *Vault) Search(identity age.Identity, query string) ([]SearchResult, err
 			continue
 		}
 		for _, p := range pairs {
-			if strings.Contains(strings.ToLower(p.Key), q) ||
-				strings.Contains(strings.ToLower(p.Value), q) {
+			if matchesQuery(p.Key, q) || matchesQuery(p.Value, q) {
 				results = append(results, SearchResult{
 					File:  entry.EncryptedPath,
 					Key:   p.Key,
@@ -44,6 +44,11 @@ func (v *Vault) Search(identity age.Identity, query string) ([]SearchResult, err
 	}
 
 	return results, nil
+}
+
+// matchesQuery reports whether s contains the query substring (case-insensitive).
+func matchesQuery(s, query string) bool {
+	return strings.Contains(strings.ToLower(s), query)
 }
 
 // decryptToPairs decrypts an .env.age file and returns its key/value pairs.
